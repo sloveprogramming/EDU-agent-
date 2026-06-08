@@ -6,6 +6,7 @@ from pymilvus import MilvusClient, DataType, AnnSearchRequest, WeightedRanker
 from langchain.docstore.document import Document
 # 导入 CrossEncoder，用于重排序和 NLI 判断
 from sentence_transformers import CrossEncoder
+from document_process import *
 # 导入 hashlib 模块，用于生成唯一 ID 的哈希值
 import hashlib
 from base import logger, Config
@@ -47,9 +48,9 @@ class VectorStore:
         if self.embedding_function is None:
             self.embedding_function = BGEM3EmbeddingFunction(
                 model_name_or_path='E:/agent_class/model/bge-m3',
-                use_fp16=True,       # GPU 开启半精度，速度翻倍、省显存
-                device="cuda",       # 使用 GPU 加速
-                local_files_only=True # 强制只读本地文件，跳过联网校验
+                use_fp16=True,  # GPU 开启半精度，速度翻倍、省显存
+                device="cuda",  # 使用 GPU 加速
+                local_files_only=True  # 强制只读本地文件，跳过联网校验
             )
             self.dense_dim = self.embedding_function.dim["dense"]
             logger.info("BGE-M3 嵌入模型（GPU）加载完成")
@@ -59,8 +60,8 @@ class VectorStore:
         if self.reranker is None:
             self.reranker = CrossEncoder(
                 "E:\\agent_class\\model\\bge-reranker-large",
-                device="cuda",       # 使用 GPU 加速
-                local_files_only=True # 强制只读本地文件，跳过联网校验
+                device="cuda",  # 使用 GPU 加速
+                local_files_only=True  # 强制只读本地文件，跳过联网校验
             )
             logger.info("BGE-Reranker 重排模型（GPU）加载完成")
 
@@ -75,7 +76,8 @@ class VectorStore:
             # 添加文本字段，VARCHAR 类型，最大长度 65535
             schema.add_field(field_name="text", datatype=DataType.VARCHAR, max_length=65535)
             # 添加稠密向量字段，FLOAT16_VECTOR 类型，维度由嵌入函数指定
-            schema.add_field(field_name="dense_vector", datatype=DataType.FLOAT16_VECTOR, dim=self.dense_dim if self.dense_dim else 1024)
+            schema.add_field(field_name="dense_vector", datatype=DataType.FLOAT16_VECTOR,
+                             dim=self.dense_dim if self.dense_dim else 1024)
             # 添加稀疏向量字段，SPARSE_FLOAT_VECTOR 类型
             schema.add_field(field_name="sparse_vector", datatype=DataType.SPARSE_FLOAT_VECTOR)
             # 添加父块 ID 字段，VARCHAR 类型，最大长度 100
@@ -118,11 +120,51 @@ class VectorStore:
         # 将集合加载到内存，确保可立即查询
         self.client.load_collection(self.collection_name)
 
+    # 定义方法，向向量数据库存储添加文档
+    def add_documents(self, documents):
+        # 启动 GPU 加速
+        self.load_embedding_model()
+        # 提取所有文档的内容列表
+        texts = [doc.page_content for doc in documents]
+        # 使用 BGE-M3 嵌入函数生成文档的嵌入
+        embeddings = self.embedding_function(texts)
+        # 初始空列表，用于存储向量数据库中的数据
+        data = []
+        # 遍历所有文档，带上索引
+        for i, doc in enumerate(documents):
+            # 生成文档内容的MD5 哈希值，作为唯一的ID
+            text_hash = hashlib.md5(doc.page_content.encode('utf-8')).hexdigest()
+            # 初始化稀疏向量字典（Milvus要求的稀疏向量的格式）
+            sparse_vector = {}
+            # 获取第i行对应的稀疏向量
+            row = embeddings["sparse"].getrow(i)
+            # 获取稀疏向量的非零值的索引
+            indics = row.indices
+            # 获取稀疏向量的非零值
+            values = row.data
+            # 将索引和值进行配对，存储到字典中
+            for idx, value in zip(indics, values):
+                sparse_vector[idx] = value
+            # 创建数据字典，包含所有字段
+            data.append({
+                "id": text_hash,
+                "text": doc.page_content,
+                "dense_vector": embeddings["dense"][i],
+                "sparse_vector": sparse_vector,
+                "parent_id": doc.metadata["parent_id"],
+                "parent_content": doc.metadata["parent_content"],
+                "source": doc.metadata.get("source", "unknown"),
+                "timestamp": doc.metadata.get("timestamp", "unknown")
+            })
+        if data:
+            # 将数据批量写入向量数据库
+            self.client.upsert(collection_name=self.collection_name, data=data)
+            # 记录添加文档的日志
+            logger.info(f"已添加 {len(data)} 个文档到集合 {self.collection_name}")
+
 
 if __name__ == '__main__':
     vector_store = VectorStore()
-    # 测试时手动触发模型加载（生产环境中在检索/入库时自动加载）
-    vector_store.load_embedding_model()
-    print("向量维度：", vector_store.embedding_function.dim)
-    vector_store.load_reranker_model()
-    print("所有 GPU 模型加载完成")
+    directoy_path = "E:/ai-agent/EDUagent/integrated_qa_system/rag_qa/data"
+    documents = process_documents(directoy_path)
+    vector_store.add_documents(documents)
