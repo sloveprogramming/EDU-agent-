@@ -6,10 +6,10 @@ from pymilvus import MilvusClient, DataType, AnnSearchRequest, WeightedRanker
 from langchain.docstore.document import Document
 # 导入 CrossEncoder，用于重排序和 NLI 判断
 from sentence_transformers import CrossEncoder
-from document_process import *
 # 导入 hashlib 模块，用于生成唯一 ID 的哈希值
 import hashlib
 from base import logger, Config
+from rag_qa.core import document_process
 
 conf = Config()
 
@@ -19,6 +19,7 @@ class VectorStore:
     """
     向量存储和检索类，封装了 Milvus 的操作和向量检索功能
     """
+
     # 初始化方法，设置向量存储的基本参数
     def __init__(self,
                  collection_name=conf.MILVUS_COLLECTION_NAME,
@@ -50,6 +51,7 @@ class VectorStore:
     """
     更换GPU加速模型
     """
+
     def load_embedding_model(self):
         if self.embedding_function is None:
             self.embedding_function = BGEM3EmbeddingFunction(
@@ -65,6 +67,7 @@ class VectorStore:
     """
     使用懒加载，防止直接加载卡顿
     """
+
     def load_reranker_model(self):
         if self.reranker is None:
             self.reranker = CrossEncoder(
@@ -78,6 +81,7 @@ class VectorStore:
     """
     创建向量数据库和对应的集合表
     """
+
     def _create_or_load_collection(self):
         # 检查指定集合是否已经存在
         if not self.client.has_collection(self.collection_name):
@@ -136,9 +140,11 @@ class VectorStore:
     """
     将处理切分好的文本块，进行向量化存储到向量数据库中
     """
+
     def add_documents(self, documents):
         # 启动 GPU 加速
         self.load_embedding_model()
+        self.logger.info("正在将文档向量化...")
         # 提取所有文档的内容列表
         texts = [doc.page_content for doc in documents]
         # 使用 BGE-M3 嵌入函数生成文档的嵌入
@@ -181,6 +187,7 @@ class VectorStore:
     """
     将问题也进行拆分向量化，再对向量数据库中的稠密和稀疏向量进行检索
     """
+
     def hybrid_search_with_rerank(self, query, k=conf.RETRIEVAL_K, source_filter=None):
         # 使用 BGE-M3 嵌入函数生成查询的嵌入
         query_embeddings = self.embedding_function([query])
@@ -223,7 +230,7 @@ class VectorStore:
             limit=k,
             expr=filter_expr
         )
-
+        self.logger.info("正在执行混合搜索...")
         # 创建加权排序器，稀疏向量权重 0.7，稠密向量权重 1.0
         ranker = WeightedRanker(1.0, 0.7)
         # 执行混合搜索，返回 Top-K 结果
@@ -257,9 +264,7 @@ class VectorStore:
         return ranked_parent_docs[:conf.CANDIDATE_M]
 
     # 定义私有方法，从子块中提取去重的父文档
-    """
-    
-    """
+
     def _get_unique_parent_docs(self, sub_chunks):
         # 初始化集合，用于存储已处理的父块内容（去重）
         parent_contents = set()
@@ -282,6 +287,7 @@ class VectorStore:
     """
     创建实例化对象，把得到的chunk中的基本信息封装到这个实例化对象当中
     """
+
     def _doc_from_hit(self, hit):
         # 创建并返回 Document 对象，填充内容和元数据
         return Document(
@@ -293,8 +299,12 @@ class VectorStore:
                 "timestamp": hit.get("timestamp")
             }
         )
+
+
 if __name__ == '__main__':
     vector_store = VectorStore()
-    directoy_path = "E:/ai-agent/EDUagent/integrated_qa_system/rag_qa/data"
-    documents = process_documents(directoy_path)
-    vector_store.add_documents(documents)
+    vector_store.load_embedding_model()
+    vector_store.load_reranker_model()
+    result = vector_store.hybrid_search_with_rerank("AI是什么？")
+    print(result)
+    print(len(result))
