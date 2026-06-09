@@ -8,11 +8,11 @@ rapidocr_paddle 和 rapidocr_onnxruntime 两种导入方式
 当只有 CPU 且需要高效推理时：使用 rapidocr_onnxruntime。它在 CPU 上进行了优化，资源占用较低.
 '''
 
-def get_ocr(use_cuda: bool = True) -> "RapidOCR":
+def get_ocr(use_cuda: bool = False) -> "RapidOCR":
     try:
         from rapidocr_paddle import RapidOCR
         '''
-        det_use_cuda=True：启用检测模型的GPU加速。cls_use_cuda=True：启用分类模型的GPU加速。rec_use_cuda=True：启用识别模型的GPU加速。
+        det_use_cuda=False：启用检测模型的CPU推理。cls_use_cuda=False：启用分类模型的CPU推理。rec_use_cuda=False：启用识别模型的CPU推理。
         '''
         ocr = RapidOCR(det_use_cuda=use_cuda, cls_use_cuda=use_cuda, rec_use_cuda=use_cuda)
     except ImportError:

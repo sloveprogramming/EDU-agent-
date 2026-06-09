@@ -37,7 +37,7 @@ class VectorStore:
         # 设置日志记录器
         self.logger = logger
 
-        # ========== GPU 加速相关变量（懒加载，避免启动卡顿） ==========
+        # ========== 模型懒加载变量（避免启动卡顿） ==========
         self.embedding_function = None
         self.dense_dim = None
         self.reranker = None
@@ -47,23 +47,23 @@ class VectorStore:
         # 调用方法创建或加载 Milvus 集合
         self._create_or_load_collection()
 
-    # 【GPU 版】加载嵌入模型（懒加载：第一次用的时候再加载）
+    # 【CPU 版】加载嵌入模型（懒加载：第一次用的时候再加载）
     """
-    更换GPU加速模型
+    更换CPU推理模型
     """
 
     def load_embedding_model(self):
         if self.embedding_function is None:
             self.embedding_function = BGEM3EmbeddingFunction(
                 model_name_or_path='E:/agent_class/model/bge-m3',
-                use_fp16=True,  # GPU 开启半精度，速度翻倍、省显存
-                device="cuda",  # 使用 GPU 加速
+                use_fp16=False,  # CPU 模式关闭半精度
+                device="cpu",  # 使用 CPU 推理
                 local_files_only=True  # 强制只读本地文件，跳过联网校验
             )
             self.dense_dim = self.embedding_function.dim["dense"]
-            logger.info("BGE-M3 嵌入模型（GPU）加载完成")
+            logger.info("BGE-M3 嵌入模型（CPU）加载完成")
 
-    # 【GPU 版】加载重排模型（懒加载：第一次用的时候再加载）
+    # 【CPU 版】加载重排模型（懒加载：第一次用的时候再加载）
     """
     使用懒加载，防止直接加载卡顿
     """
@@ -72,10 +72,10 @@ class VectorStore:
         if self.reranker is None:
             self.reranker = CrossEncoder(
                 "E:\\agent_class\\model\\bge-reranker-large",
-                device="cuda",  # 使用 GPU 加速
+                device="cpu",  # 使用 CPU 推理
                 local_files_only=True  # 强制只读本地文件，跳过联网校验
             )
-            logger.info("BGE-Reranker 重排模型（GPU）加载完成")
+            logger.info("BGE-Reranker 重排模型（CPU）加载完成")
 
     # 类私有化方法
     """
@@ -142,7 +142,7 @@ class VectorStore:
     """
 
     def add_documents(self, documents):
-        # 启动 GPU 加速
+        # 加载嵌入模型
         self.load_embedding_model()
         self.logger.info("正在将文档向量化...")
         # 提取所有文档的内容列表
